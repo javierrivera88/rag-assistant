@@ -1,0 +1,13 @@
+{
+  "name": "rag-assistant",
+  "version": "1.0.0",
+  "description": "RAG Assistant with Mistral + Pinecone + LangChain",
+  "scripts": {
+    "build": "cd backend && npm install && npm run build",
+    "start": "cd backend && node dist/index.js",
+    "dev": "cd backend && npm run dev"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
