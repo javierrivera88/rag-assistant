@@ -3,6 +3,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
+import fs from 'fs';
 
 // Infrastructure
 import { PineconeVectorRepository } from './infrastructure/pinecone/PineconeVectorRepository';
@@ -30,36 +31,28 @@ for (const envVar of requiredEnvVars) {
   }
 }
 
-const PORT = parseInt(process.env.PORT ?? '3000', 10);
-const PINECONE_API_KEY = process.env.PINECONE_API_KEY!;
+const PORT              = parseInt(process.env.PORT ?? '3000', 10);
+const PINECONE_API_KEY  = process.env.PINECONE_API_KEY!;
 const PINECONE_INDEX_NAME = process.env.PINECONE_INDEX_NAME!;
-const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY!;
+const MISTRAL_API_KEY   = process.env.MISTRAL_API_KEY!;
 
 // ============================================================
 // Dependency Injection / Composition Root
 // ============================================================
 console.log('🔧 Initializing services...');
 
-// Infrastructure services
-const embeddingService = new MistralEmbeddingService(MISTRAL_API_KEY);
-const llmService = new MistralLLMService(MISTRAL_API_KEY);
+const embeddingService  = new MistralEmbeddingService(MISTRAL_API_KEY);
+const llmService        = new MistralLLMService(MISTRAL_API_KEY);
 const documentProcessor = new PDFDocumentProcessor();
-const vectorRepository = new PineconeVectorRepository(
-  PINECONE_API_KEY,
-  PINECONE_INDEX_NAME,
-  embeddingService
+const vectorRepository  = new PineconeVectorRepository(
+  PINECONE_API_KEY, PINECONE_INDEX_NAME, embeddingService
 );
 
-// Use cases
 const uploadDocumentUseCase = new UploadDocumentUseCase(
-  documentProcessor,
-  embeddingService,
-  vectorRepository
+  documentProcessor, embeddingService, vectorRepository
 );
-const askQuestionUseCase = new AskQuestionUseCase(vectorRepository, llmService);
-
-// Controllers
-const documentController = new DocumentController(uploadDocumentUseCase);
+const askQuestionUseCase    = new AskQuestionUseCase(vectorRepository, llmService);
+const documentController    = new DocumentController(uploadDocumentUseCase);
 const conversationController = new ConversationController(askQuestionUseCase);
 
 // ============================================================
@@ -76,17 +69,38 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Serve static frontend files
-const frontendPath = path.join(__dirname, '../../frontend');
-app.use(express.static(frontendPath));
+// ── Frontend static path ──────────────────────────────────────
+// __dirname is backend/dist/ (compiled output).
+// We try multiple candidate paths so it works both locally and on Railway
+// regardless of where Nixpacks sets the WORKDIR.
+const frontendCandidates = [
+  process.env.FRONTEND_PATH,                        // explicit override
+  path.resolve(__dirname, '../../frontend'),         // local: repo root/frontend
+  path.resolve(__dirname, '../../../frontend'),      // Railway WORKDIR one level up
+  path.resolve(process.cwd(), 'frontend'),           // Railway cwd-relative
+  path.resolve(process.cwd(), '../frontend'),        // fallback
+].filter(Boolean) as string[];
 
-// API Routes
+const frontendPath = frontendCandidates.find(p => fs.existsSync(path.join(p, 'index.html')));
+
+if (frontendPath) {
+  console.log(`📁 Serving frontend from: ${frontendPath}`);
+  app.use(express.static(frontendPath));
+} else {
+  console.warn('⚠️  Frontend not found. Tried:', frontendCandidates);
+}
+
+// ── API Routes ────────────────────────────────────────────────
 const apiRoutes = createRoutes(documentController, conversationController);
 app.use('/api', apiRoutes);
 
-// Catch-all for SPA
+// ── SPA catch-all ─────────────────────────────────────────────
 app.get('*', (_req, res) => {
-  res.sendFile(path.join(frontendPath, 'index.html'));
+  if (frontendPath) {
+    res.sendFile(path.join(frontendPath, 'index.html'));
+  } else {
+    res.json({ status: 'RAG API running', endpoints: ['/api/health', '/api/documents/upload', '/api/chat/ask'] });
+  }
 });
 
 // ============================================================
@@ -94,11 +108,10 @@ app.get('*', (_req, res) => {
 // ============================================================
 async function bootstrap() {
   try {
-    // Verify Pinecone index exists
     console.log('🔍 Verifying Pinecone index...');
     const indexExists = await vectorRepository.indexExists();
     if (!indexExists) {
-      console.warn(`⚠️  Pinecone index "${PINECONE_INDEX_NAME}" not found. Please create it manually in the Pinecone dashboard with dimension 1024.`);
+      console.warn(`⚠️  Pinecone index "${PINECONE_INDEX_NAME}" not found. Dimension must be 1024.`);
     } else {
       console.log(`✅ Pinecone index "${PINECONE_INDEX_NAME}" found`);
     }
@@ -106,8 +119,7 @@ async function bootstrap() {
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`\n🚀 RAG Assistant running on port ${PORT}`);
       console.log(`📡 API: http://localhost:${PORT}/api`);
-      console.log(`🌐 Frontend: http://localhost:${PORT}`);
-      console.log(`\n📋 Available endpoints:`);
+      console.log(`\n📋 Endpoints:`);
       console.log(`   GET  /api/health`);
       console.log(`   POST /api/documents/upload`);
       console.log(`   POST /api/chat/ask`);

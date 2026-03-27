@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "description": "RAG Assistant with Mistral + Pinecone + LangChain",
   "scripts": {
-    "build": "cd backend && npm install && npm run build",
-    "start": "cd backend && node dist/index.js",
-    "dev": "cd backend && npm run dev"
+    "build": "npm --prefix backend install && npm --prefix backend run build",
+    "start": "node backend/dist/index.js",
+    "dev": "npm --prefix backend run dev"
   },
   "engines": {
     "node": ">=20.0.0"
